@@ -5,6 +5,14 @@ import * as path from "https://deno.land/std@0.223.0/path/mod.ts";
 import { cheerio } from "https://deno.land/x/cheerio@1.0.7/mod.ts";
 import { writeCSV } from "https://deno.land/x/csv@v0.9.2/mod.ts";
 
+const help = () => {
+  console.log("Usage:");
+  console.log("  tabmine [url ...] [options]");
+  console.log("Options:");
+  console.log("  -h, --help    Show this help message and exit");
+  console.log("  -o, --out     Output file name");
+};
+
 const trimText = (str: string): string => {
   return str.trim().replace(/\s+/g, " ");
 };
@@ -46,42 +54,46 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
 });
 
-const { help, out } = values;
-
-if (help) {
-  console.log("Usage:");
-  console.log("  tabmine [url ...] [options]");
-  console.log("Options:");
-  console.log("  -h, --help    Show this help message and exit");
-  console.log("  -o, --out     Output file name");
+if (values.help) {
+  help();
   Deno.exit(0);
 }
 
-if (!out) {
-  console.error("Output file name is required");
+if (positionals.length === 0) {
+  console.error("url is required");
+  help();
   Deno.exit(1);
 }
+
+const out = values.out;
+if (!out) {
+  console.error("Output file name is required");
+  help();
+  Deno.exit(1);
+}
+
 if (!await fs.exists(out)) {
   await fs.ensureDir(out);
 }
 
 const url = positionals[0];
+const response = await fetch(url);
+const $ = cheerio.load(await response.text());
 
-const res = await fetch(url);
-const body = await res.text();
-
-const $ = cheerio.load(body);
+const tables: { contentHead: string; records: string[][] }[] = [];
 
 $("table").each((_, table) => {
   const contentHead = headText($(table).text(), 15);
-  const filename = path.resolve(out, `data_${contentHead}.csv`);
-  const file = Deno.openSync(filename, {
-    write: true,
+  const records = tableToRecords($(table));
+  tables.push({ contentHead, records });
+});
+
+for (const { contentHead, records } of tables) {
+  const filename = path.join(out, `data_${contentHead}.csv`);
+  const file = await Deno.open(filename, {
     create: true,
+    write: true,
     truncate: true,
   });
-
-  const records = tableToRecords($(table));
-
-  writeCSV(file, records);
-});
+  await writeCSV(file, records);
+}
